@@ -204,30 +204,79 @@ class SentryGrid:
 
     @current_pos.setter
     def current_pos(self, value):
-        """TODO(Q3)：位置 setter；三重输入校验见题面 Q3 规范第 1 条。"""
-        raise NotImplementedError("Q3 current_pos.setter：题面 Q3·位置校验三步")
+        """Validate, normalize and store the position as a 2-tuple."""
+        if not isinstance(value, (tuple, list)):
+            raise TypeError("current_pos only accepts tuple or list")
+        if len(value) != 2:
+            raise TypeError("current_pos must be a coordinate of length 2")
+        new_pos = self._clamp_cell(value)
+        if new_pos in self._obstacles:
+            raise ValueError("current_pos must not be on an obstacle")
+        self._pos = new_pos
 
     def move_forward(self):
-        """TODO(Q3)：朝当前 facing 前进一格，返回执行后的位置；
-        碰撞、耗电与断电语义见题面 Q3 规范。"""
-        raise NotImplementedError("Q3 move_forward：题面 Q3·前进、碰撞与断电")
+        """Move one cell toward the current facing; return the new position."""
+        if self._fuel <= 0:
+            return self._pos
+        dx, dy = self._facing.delta
+        next_pos = (self._pos[0] + dx, self._pos[1] + dy)
+        if self.is_blocked(*next_pos):
+            self._collision_count += 1
+            return self._pos
+        self._pos = next_pos
+        self._fuel -= 1
+        return self._pos
 
     def turn_left(self):
-        """TODO(Q3)：原地左转 90°，返回新的 Facing（不耗电）。"""
-        raise NotImplementedError("Q3 turn_left")
+        """Rotate 90 degrees counterclockwise; return the new Facing."""
+        left_turn = {
+            Facing.UP: Facing.LEFT,
+            Facing.LEFT: Facing.DOWN,
+            Facing.DOWN: Facing.RIGHT,
+            Facing.RIGHT: Facing.UP,
+        }
+        self._facing = left_turn[self._facing]
+        return self._facing
 
     def turn_right(self):
-        """TODO(Q3)：原地右转 90°，返回新的 Facing（不耗电）。"""
-        raise NotImplementedError("Q3 turn_right")
+        """Rotate 90 degrees clockwise; return the new Facing."""
+        right_turn = {
+            Facing.UP: Facing.RIGHT,
+            Facing.RIGHT: Facing.DOWN,
+            Facing.DOWN: Facing.LEFT,
+            Facing.LEFT: Facing.UP,
+        }
+        self._facing = right_turn[self._facing]
+        return self._facing
 
 
 # ---------------------------------------------------------------------------
 # Q4 贪心导航（题面 Q4·单步贪心导航策略）
 # ---------------------------------------------------------------------------
 def next_step_toward(pos, target, obstacles, current_facing=Facing.UP):
-    """TODO(Q4)：返回下一步应朝向的 Facing；
-    候选判定、优先级与回退规则见题面 Q4 规范。"""
-    raise NotImplementedError("Q4 next_step_toward：题面 Q4·贪心策略与回退")
+    """Return the Facing of a free neighbor that strictly reduces distance."""
+    x, y = pos
+    tx, ty = target
+    cur_dist = abs(x - tx) + abs(y - ty)
+    better = set()
+    for facing in Facing:
+        dx, dy = facing.delta
+        nxt = (x + dx, y + dy)
+        if nxt in obstacles:
+            continue
+        if abs(nxt[0] - tx) + abs(nxt[1] - ty) < cur_dist:
+            better.add(facing)
+    if not better:
+        return current_facing
+    horizontal = (Facing.RIGHT, Facing.LEFT)
+    vertical = (Facing.UP, Facing.DOWN)
+    if abs(tx - x) > abs(ty - y):
+        preferred = horizontal + vertical
+    else:
+        preferred = vertical + horizontal
+    for facing in preferred:
+        if facing in better:
+            return facing
 
 
 # ---------------------------------------------------------------------------
@@ -243,10 +292,64 @@ class SentryState(Enum):
     RETURN = "RETURN"
 
 
+def _engage_action(enemy_dist, is_hero):
+    """R4/R6 shared choice: shoot at close range, strafe otherwise."""
+    if enemy_dist is not None and enemy_dist <= 3:
+        return "SHOOT"
+    return "MOVE_RIGHT" if is_hero else "MOVE_LEFT"
+
+
 def decide(sensor, state, hp, heat):
-    """TODO(Q5)：纯函数决策，返回 (action: str, new_state: SentryState)；
-    sensor 字段契约、R1-R7 规则表与非法输入处理见题面 Q5 规范。"""
-    raise NotImplementedError("Q5 decide：题面 Q5·决策规则表 R1-R7")
+    """Apply rules R1-R7 in fixed order; return (action, SentryState)."""
+    required = ("enemy_frames", "enemy_dist", "robot_type", "max_hp")
+    if (not isinstance(sensor, dict)
+            or any(key not in sensor for key in required)):
+        raise ValueError("sensor is missing required fields")
+    if not isinstance(state, SentryState):
+        raise ValueError("state must be a SentryState member")
+    raw_frames = sensor["enemy_frames"]
+    if isinstance(raw_frames, (tuple, list)):
+        frames = [bool(frame) for frame in raw_frames]
+    else:
+        frames = [bool(raw_frames)]
+    if not 1 <= len(frames) <= 6:
+        raise ValueError("enemy_frames length must be between 1 and 6")
+    enemy_dist = sensor["enemy_dist"]
+    if not isinstance(enemy_dist, int) or isinstance(enemy_dist, bool):
+        enemy_dist = None
+    is_hero = sensor["robot_type"] == "HERO"
+    max_hp = sensor["max_hp"]
+    if (not isinstance(max_hp, int) or isinstance(max_hp, bool)
+            or max_hp <= 0):
+        max_hp = 100
+    try:
+        hp_int = int(hp)
+    except (TypeError, ValueError):
+        hp_int = 0
+    hp_pct = max(0, min(100, hp_int * 100 // max_hp))
+    visible = frames[-1]
+
+    if hp_pct <= 30:
+        return ("RETREAT", SentryState.RETREAT)
+    if state is SentryState.RETREAT:
+        return ("RETURN", SentryState.RETURN)
+    if state is SentryState.RETURN:
+        return ("MOVE_BASE", SentryState.PATROL)
+    if state is SentryState.ENGAGE:
+        if visible:
+            return (_engage_action(enemy_dist, is_hero),
+                    SentryState.ENGAGE)
+        if len(frames) >= 2 and frames[-2]:
+            return ("HOLD_FIRE", SentryState.ENGAGE)
+        return ("SCAN", SentryState.SUSPECT)
+    if visible:
+        if len(frames) >= 2 and frames[-2]:
+            return (_engage_action(enemy_dist, is_hero),
+                    SentryState.ENGAGE)
+        return ("SCAN", SentryState.SUSPECT)
+    if state is SentryState.PATROL:
+        return ("PATROL_MOVE", SentryState.PATROL)
+    return ("SCAN", SentryState.SUSPECT)
 
 
 # ---------------------------------------------------------------------------

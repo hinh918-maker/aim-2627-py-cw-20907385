@@ -11,6 +11,7 @@
 - `python main.py`（或 PYTHONPATH=src python -m main）可看 ASCII 演示。
 """
 import json
+import re
 from enum import Enum
 
 
@@ -58,10 +59,63 @@ def status_report(name, robot_type, hp, max_hp, battery):
 # ---------------------------------------------------------------------------
 
 
+_SENSOR_RE = re.compile(r"([FLR]):(\d+)")
+
+
 def analyze_damage_log(lines):
-    """TODO(Q2)：解析混合格式伤害日志，返回固定契约的统计 dict；
-    行格式、去重与统计口径见题面 Q2 规范。"""
-    raise NotImplementedError("Q2 analyze_damage_log：题面 Q2·多源日志解析与统计")
+    """Parse mixed damage logs; skip dirty lines; return Q2 stats dict."""
+    by_armor = {"front": 0, "left": 0, "right": 0}
+    total = 0
+    hit_count = 0
+    seen_ids = set()
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("{") and line.endswith("}"):
+            try:
+                data = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if not isinstance(data, dict):
+                continue
+            armor = data.get("armor")
+            damage = data.get("damage")
+            event_id = data.get("id")
+            if "id" in data:
+                if not isinstance(event_id, int) or isinstance(event_id, bool):
+                    continue
+                if event_id in seen_ids:
+                    continue
+            if (armor not in by_armor
+                    or not isinstance(damage, int)
+                    or isinstance(damage, bool)
+                    or damage <= 0):
+                continue
+            if "id" in data:
+                seen_ids.add(event_id)
+            by_armor[armor] += damage
+            total += damage
+            hit_count += 1
+        else:
+            pairs = _SENSOR_RE.findall(line)
+            if not pairs:
+                continue
+            residue = _SENSOR_RE.sub("", line).replace(",", "").strip()
+            if residue:
+                continue
+            for part, num_str in pairs:
+                damage = int(num_str)
+                key = {"F": "front", "L": "left", "R": "right"}[part]
+                by_armor[key] += damage
+                total += damage
+                hit_count += 1
+    most_hit = None
+    if hit_count > 0:
+        most_hit = max(by_armor, key=by_armor.get)
+    avg = round(total / hit_count, 2) if hit_count else 0.0
+    return {"total": total, "by_armor": by_armor,
+            "most_hit": most_hit, "avg": avg}
 
 
 # ---------------------------------------------------------------------------

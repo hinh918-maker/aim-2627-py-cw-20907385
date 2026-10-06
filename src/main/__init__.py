@@ -355,15 +355,153 @@ def decide(sensor, state, hp, heat):
 # ---------------------------------------------------------------------------
 # Q6 巡逻任务（题面 Q6·巡逻契约与验收阈值）
 # ---------------------------------------------------------------------------
+def loop_detect_hand(grid, loop_path):
+    """True when the current cell was already visited in this wall loop."""
+    return grid.current_pos in loop_path
+
+
 def run_patrol(grid, max_steps=500):
-    """TODO(Q6)：sense → decide → act 主循环；
-    循环结构、终止条件、脱困自由度与统计返回契约见题面 Q6 规范。"""
-    raise NotImplementedError("Q6 run_patrol：题面 Q6·主循环与统计契约")
+    """Run the sense-decide-act patrol loop; return the Q6 stats dict.
+
+    Greedy moves while a neighbor strictly reduces Manhattan distance;
+    on a stall, follow the wall left-handed, switching to the right
+    hand when a closed loop is revisited (or after a step budget),
+    until greedy progress is available again.
+    """
+    left_of = {
+        Facing.UP: Facing.LEFT,
+        Facing.LEFT: Facing.DOWN,
+        Facing.DOWN: Facing.RIGHT,
+        Facing.RIGHT: Facing.UP,
+    }
+    right_of = {v: k for k, v in left_of.items()}
+    right_turns = {
+        Facing.UP: 0,
+        Facing.RIGHT: 1,
+        Facing.DOWN: 2,
+        Facing.LEFT: 3,
+    }
+
+    def manhattan(a, b):
+        return abs(a[0] - b[0]) + abs(a[1] - b[1])
+
+    def cell_at(pos, facing):
+        dx, dy = facing.delta
+        return (pos[0] + dx, pos[1] + dy)
+
+    def has_candidate():
+        """True when a free neighbor strictly reduces distance."""
+        pos = grid.current_pos
+        dist = manhattan(pos, grid.enemy_pos)
+        for facing in Facing:
+            nxt = cell_at(pos, facing)
+            blocked = grid.is_blocked(*nxt)
+            if not blocked and manhattan(nxt, grid.enemy_pos) < dist:
+                return True
+        return False
+
+    def align(facing):
+        """Turn in place with fewest turns (turns cost no fuel)."""
+        diff = (right_turns[facing] - right_turns[grid.facing]) % 4
+        if diff == 3:
+            grid.turn_left()
+        else:
+            for _ in range(diff):
+                grid.turn_right()
+
+    visited = {grid.current_pos}
+    steps = 0
+    wall_mode = False
+    hand = "L"
+    wall_steps = 0
+    entry_dist = 0
+    loop_path = set()
+    step_budget = 1.25 * (grid.width + grid.height)
+
+    while steps < max_steps and grid.fuel > 0 and not grid.found_enemy:
+        pos = grid.current_pos
+
+        # Enter escape mode exactly when greedy has no improving neighbor.
+        if not wall_mode and not has_candidate():
+            wall_mode = True
+            hand = "L"
+            wall_steps = 0
+            entry_dist = manhattan(pos, grid.enemy_pos)
+            loop_path = {pos}
+
+        if wall_mode:
+            # Keep the chosen hand on the wall: prefer the hand-side cell,
+            # otherwise go forward, otherwise turn away or make a U-turn.
+            if hand == "L":
+                side = left_of[grid.facing]
+                away = right_of[grid.facing]
+            else:
+                side = right_of[grid.facing]
+                away = left_of[grid.facing]
+            if not grid.is_blocked(*cell_at(pos, side)):
+                if hand == "L":
+                    grid.turn_left()
+                else:
+                    grid.turn_right()
+            elif grid.is_blocked(*cell_at(pos, grid.facing)):
+                if not grid.is_blocked(*cell_at(pos, away)):
+                    if hand == "L":
+                        grid.turn_right()
+                    else:
+                        grid.turn_left()
+                else:
+                    grid.turn_right()
+                    grid.turn_right()
+        else:
+            direction = next_step_toward(pos, grid.enemy_pos,
+                                         grid.obstacles, grid.facing)
+            align(direction)
+
+        grid.move_forward()
+        steps += 1
+        visited.add(grid.current_pos)
+
+        if wall_mode:
+            wall_steps += 1
+            switched_hand = False
+            if (loop_detect_hand(grid, loop_path)
+                    and hand == "L"):
+                # Revisited a cell of this wall-following loop: the left
+                # hand is circling, switch hands immediately.
+                hand = "R"
+                wall_steps = 0
+                loop_path = {grid.current_pos}
+                switched_hand = True
+            if not switched_hand:
+                loop_path.add(grid.current_pos)
+                if wall_steps > step_budget and hand == "L":
+                    # Left hand loops too long: switch hands.
+                    hand = "R"
+                    wall_steps = 0
+                    loop_path = {grid.current_pos}
+                elif wall_steps > 2 * step_budget:
+                    wall_mode = False
+                elif (has_candidate()
+                      and manhattan(grid.current_pos,
+                                    grid.enemy_pos) < entry_dist + 1):
+                    wall_mode = False
+
+    found = grid.found_enemy
+    return {
+        "steps": steps,
+        "collisions": grid.collision_count,
+        "visited_count": len(visited),
+        "found_enemy": found,
+        "success": found,
+    }
 
 
 def report_to_json(stats):
-    """TODO(Q6)：把 stats 序列化为确定性的 JSON 字符串，见题面 Q6 规范。"""
-    raise NotImplementedError("Q6 report_to_json：题面 Q6·报告序列化")
+    """Serialize stats to a deterministic JSON string (fixed key order)."""
+    keys = ("steps", "collisions", "visited_count",
+            "found_enemy", "success")
+    ordered = {key: stats[key] for key in keys}
+    return json.dumps(ordered, ensure_ascii=True)
 
 
 # ---------------------------------------------------------------------------

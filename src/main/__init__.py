@@ -410,6 +410,18 @@ def run_patrol(grid, max_steps=500):
             for _ in range(diff):
                 grid.turn_right()
 
+    def stick_to_wall(hand):
+        """Rotate in place until the chosen hand-side cell is a wall."""
+        for _ in Facing:
+            side = (left_of[grid.facing] if hand == "L"
+                    else right_of[grid.facing])
+            if grid.is_blocked(*cell_at(grid.current_pos, side)):
+                return
+            if hand == "L":
+                grid.turn_left()
+            else:
+                grid.turn_right()
+
     visited = {grid.current_pos}
     steps = 0
     wall_mode = False
@@ -429,6 +441,7 @@ def run_patrol(grid, max_steps=500):
             wall_steps = 0
             entry_dist = manhattan(pos, grid.enemy_pos)
             loop_path = {pos}
+            stick_to_wall(hand)
 
         if wall_mode:
             # Keep the chosen hand on the wall: prefer the hand-side cell,
@@ -472,6 +485,7 @@ def run_patrol(grid, max_steps=500):
                 hand = "R"
                 wall_steps = 0
                 loop_path = {grid.current_pos}
+                stick_to_wall(hand)
                 switched_hand = True
             if not switched_hand:
                 loop_path.add(grid.current_pos)
@@ -480,6 +494,7 @@ def run_patrol(grid, max_steps=500):
                     hand = "R"
                     wall_steps = 0
                     loop_path = {grid.current_pos}
+                    stick_to_wall(hand)
                 elif wall_steps > 2 * step_budget:
                     wall_mode = False
                 elif (has_candidate()

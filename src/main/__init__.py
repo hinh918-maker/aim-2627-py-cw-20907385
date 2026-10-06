@@ -60,7 +60,7 @@ def status_report(name, robot_type, hp, max_hp, battery):
 # ---------------------------------------------------------------------------
 
 
-_SENSOR_RE = re.compile(r"([FLR]):(\d+)")
+_SENSOR_RE = re.compile(r"([FLR]):([1-9]\d*)")
 
 
 def analyze_damage_log(lines):
@@ -146,9 +146,9 @@ class SentryGrid:
         self._facing = facing
         self._fuel = int(fuel)
         self._collision_count = 0
-        self._pos = self._clamp_cell(start_pos)
-        if self._pos in self._obstacles:
-            raise ValueError("start_pos 不能位于障碍物上")
+        # Reuse the setter so start_pos gets the exact same validation
+        # (type, length, clamp, obstacle) as a later current_pos assignment.
+        self.current_pos = start_pos
 
     def _clamp_cell(self, cell):
         """已提供：元素转 int 并夹回地图范围（供 __init__ 使用）。"""
@@ -316,7 +316,9 @@ def decide(sensor, state, hp, heat):
     if not 1 <= len(frames) <= 6:
         raise ValueError("enemy_frames length must be between 1 and 6")
     enemy_dist = sensor["enemy_dist"]
-    if not isinstance(enemy_dist, int) or isinstance(enemy_dist, bool):
+    if (not isinstance(enemy_dist, int)
+            or isinstance(enemy_dist, bool)
+            or enemy_dist < 0):
         enemy_dist = None
     is_hero = sensor["robot_type"] == "HERO"
     max_hp = sensor["max_hp"]

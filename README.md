@@ -114,9 +114,18 @@ CI 只允许修改 `src/main/**`、`README.md` 与 `.agent-sessions/**`（AI 会
 - **`report_to_json` 确定性**：按契约固定五键顺序重建 dict 后 `json.dumps(..., ensure_ascii=True)`，默认紧凑分隔符，任何键序的输入都产生同一字符串。
 - `visited_count` 统计包含起点在内的所有到过位置的去重数；`found_enemy` 与 `success` 同取 `grid.found_enemy`（bool）。
 
-### Q7 / Bonus
+### Q7 Debug（六处缺陷定位）
 
-- （待实现后补充：Q7 六处缺陷的定位过程；Bonus BFS 替换贪心后的排行榜数据。）
+1. **`total_route_meters`：厘米当米累加**——`segment_length_cm` 返回值单位是厘米（格 ×100），求和后直接赋给 `distance_in_meters`。定位：跑 `[(0,0),(3,0),(3,4)]` 得 700 而非 7，除以 100 修正。
+2. **`calibrate`：`first_positive` 返回 None 时崩溃**——`s - baseline` 中 None 参与算术运算抛 TypeError；被遮蔽的是"空列表/无正数样本时 drift 应为 0"的契约。修正：None 时提前返回 0。
+3. **`summarize_events`：`<` 应为 `<=`**——`id == max_id` 的事件被漏统计。定位：构造 `id=2, max_id=2` 的用例，期望 2 条实测 1 条。
+4. **`log`：可变默认参数陷阱**——`history=[]` 在函数定义时创建一次、被所有调用共享，多次调用历史不断累积。修正：`history=None` + 函数体判空新建。
+5. **`run_legacy_sim`：终止条件写反**——`if stamina > 20: break` 是"体力充足才停"，与契约"<=20 立即终止"相反。
+6. **`run_legacy_sim`：while 循环缺 `round_ += 1`**——计数器不自增，`round_ < rounds` 永真，死循环。与第 5 条互相遮蔽：条件写反时永远不进入 `break` 分支，缺自增不暴露；先修条件后死循环才显现。
+
+### Bonus
+
+- （待实现后补充：BFS 替换贪心后的排行榜数据。）
 
 ## 7. 踩坑记录（你来写）
 

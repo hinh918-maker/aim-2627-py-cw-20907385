@@ -14,6 +14,16 @@
 """
 
 # ---------------------------------------------------------------------------
+# 常量
+# ---------------------------------------------------------------------------
+CM_PER_METER = 100
+BASE_STAMINA_COST = 8        # 每轮基础体力消耗
+EXTRA_STAMINA_COST = 5       # 第 4 轮起每轮额外消耗
+EXTRA_COST_FIRST_ROUND = 3   # 轮号 >= 该值开始计额外消耗
+STAMINA_STOP_THRESHOLD = 20  # 轮末体力 <= 该值立即终止
+
+
+# ---------------------------------------------------------------------------
 # 路线统计
 # ---------------------------------------------------------------------------
 
@@ -21,7 +31,7 @@
 def segment_length_cm(p1, p2):
     """两个检查点 (x, y) 之间的路线长度，单位：厘米。
     检查点坐标单位为格，1 格 = 1 米 = 100 厘米，路线按曼哈顿距离计算。"""
-    return (abs(p1[0] - p2[0]) + abs(p1[1] - p2[1])) * 100
+    return (abs(p1[0] - p2[0]) + abs(p1[1] - p2[1])) * CM_PER_METER
 
 
 def total_route_meters(points):
@@ -29,7 +39,8 @@ def total_route_meters(points):
     points 为检查点序列 [(x, y), ...]，至少两个点。"""
     distance_in_meters = 0
     for i in range(len(points) - 1):
-        distance_in_meters += segment_length_cm(points[i], points[i + 1]) / 100
+        distance_in_meters += (segment_length_cm(points[i], points[i + 1])
+                               / CM_PER_METER)
     return distance_in_meters
 
 
@@ -109,11 +120,11 @@ def run_legacy_sim(rounds, stamina_start=100):
     round_ = 0
     trace = []
     while round_ < rounds:
-        stamina -= 8
-        if round_ >= 3:
-            stamina -= 5
+        stamina -= BASE_STAMINA_COST
+        if round_ >= EXTRA_COST_FIRST_ROUND:
+            stamina -= EXTRA_STAMINA_COST
         trace.append((round_, stamina))
-        if stamina <= 20:
+        if stamina <= STAMINA_STOP_THRESHOLD:
             break
         round_ += 1
     return {"rounds": len(trace), "stamina": stamina, "trace": trace}

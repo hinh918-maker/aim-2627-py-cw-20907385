@@ -36,18 +36,25 @@ class Facing(Enum):
 # ---------------------------------------------------------------------------
 # Q1 机器人自检（题面 Q1·自检状态计算与报告生成）
 # ---------------------------------------------------------------------------
+MAX_PERCENT = 100
+BATTERY_OK_MIN = 60      # battery >= 60 -> OK
+BATTERY_LOW_MAX = 20     # battery <= 20 -> LOW, otherwise WARNING
+
+
 def hp_ratio(hp, max_hp):
-    """TODO(Q1)：血量百分比，返回 0-100 的 int；计算与边界规则见题面 Q1 规范。"""
-    ratio = hp * 100 // max_hp
-    return max(0, min(100, ratio))
+    """Hit point percentage as an int clamped to [0, 100]."""
+    if max_hp <= 0:
+        return 0
+    ratio = hp * MAX_PERCENT // max_hp
+    return max(0, min(MAX_PERCENT, ratio))
 
 
 def status_report(name, robot_type, hp, max_hp, battery):
-    """TODO(Q1)：一行自检报告字符串；档位判定与逐字符格式见题面 Q1 规范。"""
+    """One-line self-check report; levels and widths follow the Q1 spec."""
     hp_percent = hp_ratio(hp, max_hp)
-    if battery >= 60:
+    if battery >= BATTERY_OK_MIN:
         level = "OK"
-    elif battery > 20:
+    elif battery > BATTERY_LOW_MAX:
         level = "WARNING"
     else:
         level = "LOW"
@@ -60,60 +67,84 @@ def status_report(name, robot_type, hp, max_hp, battery):
 # ---------------------------------------------------------------------------
 
 
+_ARMOR_KEYS = ("front", "left", "right")
+_SENSOR_CODE = {"F": "front", "L": "left", "R": "right"}
 _SENSOR_RE = re.compile(r"([FLR]):([1-9]\d*)")
+
+
+def _parse_json_line(line):
+    """Validate one JSON log line.
+
+    Return (armor, damage, event_id, has_id) for a valid event, or None
+    when the line is dirty and must be skipped.
+    """
+    try:
+        data = json.loads(line)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    armor = data.get("armor")
+    damage = data.get("damage")
+    if (armor not in _ARMOR_KEYS
+            or not isinstance(damage, int)
+            or isinstance(damage, bool)
+            or damage <= 0):
+        return None
+    has_id = "id" in data
+    event_id = data.get("id")
+    if has_id and (not isinstance(event_id, int)
+                   or isinstance(event_id, bool)):
+        return None
+    return armor, damage, event_id, has_id
+
+
+def _parse_sensor_line(line):
+    """Validate an 'F:32,L:5' line; return [(armor, damage), ...] or None."""
+    pairs = _SENSOR_RE.findall(line)
+    if not pairs:
+        return None
+    # Anything left after stripping valid segments/commas means the line
+    # carries garbage (e.g. 'F:10;X'): the whole line is dirty.
+    residue = _SENSOR_RE.sub("", line).replace(",", "").strip()
+    if residue:
+        return None
+    return [(_SENSOR_CODE[code], int(value)) for code, value in pairs]
 
 
 def analyze_damage_log(lines):
     """Parse mixed damage logs; skip dirty lines; return Q2 stats dict."""
-    by_armor = {"front": 0, "left": 0, "right": 0}
-    total = 0
-    hit_count = 0
+    events = []
     seen_ids = set()
     for raw_line in lines:
+        # Spec rule 3: parsing must never raise; non-text lines are dirty.
+        if not isinstance(raw_line, str):
+            continue
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
         if line.startswith("{") and line.endswith("}"):
-            try:
-                data = json.loads(line)
-            except (json.JSONDecodeError, ValueError):
+            parsed = _parse_json_line(line)
+            if parsed is None:
                 continue
-            if not isinstance(data, dict):
-                continue
-            armor = data.get("armor")
-            damage = data.get("damage")
-            event_id = data.get("id")
-            if "id" in data:
-                if not isinstance(event_id, int) or isinstance(event_id, bool):
-                    continue
+            armor, damage, event_id, has_id = parsed
+            if has_id:
                 if event_id in seen_ids:
                     continue
-            if (armor not in by_armor
-                    or not isinstance(damage, int)
-                    or isinstance(damage, bool)
-                    or damage <= 0):
-                continue
-            if "id" in data:
                 seen_ids.add(event_id)
-            by_armor[armor] += damage
-            total += damage
-            hit_count += 1
+            events.append((armor, damage))
         else:
-            pairs = _SENSOR_RE.findall(line)
-            if not pairs:
+            parsed = _parse_sensor_line(line)
+            if parsed is None:
                 continue
-            residue = _SENSOR_RE.sub("", line).replace(",", "").strip()
-            if residue:
-                continue
-            for part, num_str in pairs:
-                damage = int(num_str)
-                key = {"F": "front", "L": "left", "R": "right"}[part]
-                by_armor[key] += damage
-                total += damage
-                hit_count += 1
-    most_hit = None
-    if hit_count > 0:
-        most_hit = max(by_armor, key=by_armor.get)
+            events.extend(parsed)
+
+    by_armor = {key: 0 for key in _ARMOR_KEYS}
+    for armor, damage in events:
+        by_armor[armor] += damage
+    hit_count = len(events)
+    total = sum(damage for _, damage in events)
+    most_hit = max(by_armor, key=by_armor.get) if hit_count else None
     avg = round(total / hit_count, 2) if hit_count else 0.0
     return {"total": total, "by_armor": by_armor,
             "most_hit": most_hit, "avg": avg}
@@ -122,6 +153,21 @@ def analyze_damage_log(lines):
 # ---------------------------------------------------------------------------
 # Q3 SentryGrid（题面 Q3·载体物理规则）
 # ---------------------------------------------------------------------------
+# World-coordinate rotation tables, shared by SentryGrid turns (Q3),
+# greedy alignment and wall following (Q6): one source of geometry truth.
+TURN_LEFT_OF = {
+    Facing.UP: Facing.LEFT,
+    Facing.LEFT: Facing.DOWN,
+    Facing.DOWN: Facing.RIGHT,
+    Facing.RIGHT: Facing.UP,
+}
+TURN_RIGHT_OF = {side: front for front, side in TURN_LEFT_OF.items()}
+RIGHT_TURN_COUNT = {
+    face: index for index, face in enumerate(
+        (Facing.UP, Facing.RIGHT, Facing.DOWN, Facing.LEFT))
+}
+
+
 class SentryGrid:
     """哨兵仿真载体（构造与只读属性已提供；四个 TODO 方法由你实现）。"""
 
@@ -230,30 +276,22 @@ class SentryGrid:
 
     def turn_left(self):
         """Rotate 90 degrees counterclockwise; return the new Facing."""
-        left_turn = {
-            Facing.UP: Facing.LEFT,
-            Facing.LEFT: Facing.DOWN,
-            Facing.DOWN: Facing.RIGHT,
-            Facing.RIGHT: Facing.UP,
-        }
-        self._facing = left_turn[self._facing]
+        self._facing = TURN_LEFT_OF[self._facing]
         return self._facing
 
     def turn_right(self):
         """Rotate 90 degrees clockwise; return the new Facing."""
-        right_turn = {
-            Facing.UP: Facing.RIGHT,
-            Facing.RIGHT: Facing.DOWN,
-            Facing.DOWN: Facing.LEFT,
-            Facing.LEFT: Facing.UP,
-        }
-        self._facing = right_turn[self._facing]
+        self._facing = TURN_RIGHT_OF[self._facing]
         return self._facing
 
 
 # ---------------------------------------------------------------------------
 # Q4 贪心导航（题面 Q4·单步贪心导航策略）
 # ---------------------------------------------------------------------------
+_HORIZONTAL_FACINGS = (Facing.RIGHT, Facing.LEFT)
+_VERTICAL_FACINGS = (Facing.UP, Facing.DOWN)
+
+
 def next_step_toward(pos, target, obstacles, current_facing=Facing.UP):
     """Return the Facing of a free neighbor that strictly reduces distance."""
     x, y = pos
@@ -269,12 +307,10 @@ def next_step_toward(pos, target, obstacles, current_facing=Facing.UP):
             better.add(facing)
     if not better:
         return current_facing
-    horizontal = (Facing.RIGHT, Facing.LEFT)
-    vertical = (Facing.UP, Facing.DOWN)
     if abs(tx - x) > abs(ty - y):
-        preferred = horizontal + vertical
+        preferred = _HORIZONTAL_FACINGS + _VERTICAL_FACINGS
     else:
-        preferred = vertical + horizontal
+        preferred = _VERTICAL_FACINGS + _HORIZONTAL_FACINGS
     for facing in preferred:
         if facing in better:
             return facing
@@ -293,9 +329,16 @@ class SentryState(Enum):
     RETURN = "RETURN"
 
 
+RETREAT_HP_PERCENT = 30   # at/below this HP share the sentry retreats
+ENGAGE_RANGE = 3          # enemy within this many cells: shoot
+MAX_FRAME_HISTORY = 6     # accepted enemy_frames window length
+CONFIRM_FRAMES = 2        # consecutive sightings needed to engage
+DEFAULT_MAX_HP = 100
+
+
 def _engage_action(enemy_dist, is_hero):
     """R4/R6 shared choice: shoot at close range, strafe otherwise."""
-    if enemy_dist is not None and enemy_dist <= 3:
+    if enemy_dist is not None and enemy_dist <= ENGAGE_RANGE:
         return "SHOOT"
     return "MOVE_RIGHT" if is_hero else "MOVE_LEFT"
 
@@ -313,7 +356,7 @@ def decide(sensor, state, hp, heat):
         frames = [bool(frame) for frame in raw_frames]
     else:
         frames = [bool(raw_frames)]
-    if not 1 <= len(frames) <= 6:
+    if not 1 <= len(frames) <= MAX_FRAME_HISTORY:
         raise ValueError("enemy_frames length must be between 1 and 6")
     enemy_dist = sensor["enemy_dist"]
     if (not isinstance(enemy_dist, int)
@@ -324,15 +367,16 @@ def decide(sensor, state, hp, heat):
     max_hp = sensor["max_hp"]
     if (not isinstance(max_hp, int) or isinstance(max_hp, bool)
             or max_hp <= 0):
-        max_hp = 100
+        max_hp = DEFAULT_MAX_HP
     try:
         hp_int = int(hp)
     except (TypeError, ValueError):
         hp_int = 0
-    hp_pct = max(0, min(100, hp_int * 100 // max_hp))
+    hp_pct = max(0, min(MAX_PERCENT,
+                        hp_int * MAX_PERCENT // max_hp))
     visible = frames[-1]
 
-    if hp_pct <= 30:
+    if hp_pct <= RETREAT_HP_PERCENT:
         return ("RETREAT", SentryState.RETREAT)
     if state is SentryState.RETREAT:
         return ("RETURN", SentryState.RETURN)
@@ -342,11 +386,11 @@ def decide(sensor, state, hp, heat):
         if visible:
             return (_engage_action(enemy_dist, is_hero),
                     SentryState.ENGAGE)
-        if len(frames) >= 2 and frames[-2]:
+        if len(frames) >= CONFIRM_FRAMES and frames[-2]:
             return ("HOLD_FIRE", SentryState.ENGAGE)
         return ("SCAN", SentryState.SUSPECT)
     if visible:
-        if len(frames) >= 2 and frames[-2]:
+        if len(frames) >= CONFIRM_FRAMES and frames[-2]:
             return (_engage_action(enemy_dist, is_hero),
                     SentryState.ENGAGE)
         return ("SCAN", SentryState.SUSPECT)
@@ -358,6 +402,14 @@ def decide(sensor, state, hp, heat):
 # ---------------------------------------------------------------------------
 # Q6 巡逻任务（题面 Q6·巡逻契约与验收阈值）
 # ---------------------------------------------------------------------------
+WALL_BUDGET_FACTOR = 1.25   # per-hand step budget = factor * (w + h)
+WALL_EXIT_MULTIPLIER = 2   # after 2x budget give up wall following
+GREEDY_RETURN_MARGIN = 1   # resume greedy only near entry distance
+U_TURN_STEPS = 2
+LEFT_HAND = "L"
+RIGHT_HAND = "R"
+
+
 def loop_detect_hand(grid, loop_path):
     """True when the current cell was already visited in this wall loop."""
     return grid.current_pos in loop_path
@@ -371,19 +423,10 @@ def run_patrol(grid, max_steps=500):
     hand when a closed loop is revisited (or after a step budget),
     until greedy progress is available again.
     """
-    left_of = {
-        Facing.UP: Facing.LEFT,
-        Facing.LEFT: Facing.DOWN,
-        Facing.DOWN: Facing.RIGHT,
-        Facing.RIGHT: Facing.UP,
-    }
-    right_of = {v: k for k, v in left_of.items()}
-    right_turns = {
-        Facing.UP: 0,
-        Facing.RIGHT: 1,
-        Facing.DOWN: 2,
-        Facing.LEFT: 3,
-    }
+    # Per-hand geometry: which side the hand tracks, the opposite side,
+    # and the turn that points the carrier toward each of them.
+    hand_side = {LEFT_HAND: TURN_LEFT_OF, RIGHT_HAND: TURN_RIGHT_OF}
+    hand_away = {LEFT_HAND: TURN_RIGHT_OF, RIGHT_HAND: TURN_LEFT_OF}
 
     def manhattan(a, b):
         return abs(a[0] - b[0]) + abs(a[1] - b[1])
@@ -392,20 +435,22 @@ def run_patrol(grid, max_steps=500):
         dx, dy = facing.delta
         return (pos[0] + dx, pos[1] + dy)
 
+    def blocked(pos, facing):
+        return grid.is_blocked(*cell_at(pos, facing))
+
     def has_candidate():
         """True when a free neighbor strictly reduces distance."""
         pos = grid.current_pos
         dist = manhattan(pos, grid.enemy_pos)
-        for facing in Facing:
-            nxt = cell_at(pos, facing)
-            blocked = grid.is_blocked(*nxt)
-            if not blocked and manhattan(nxt, grid.enemy_pos) < dist:
-                return True
-        return False
+        return any(
+            not blocked(pos, facing)
+            and manhattan(cell_at(pos, facing), grid.enemy_pos) < dist
+            for facing in Facing)
 
     def align(facing):
         """Turn in place with fewest turns (turns cost no fuel)."""
-        diff = (right_turns[facing] - right_turns[grid.facing]) % 4
+        diff = (RIGHT_TURN_COUNT[facing]
+                - RIGHT_TURN_COUNT[grid.facing]) % 4
         if diff == 3:
             grid.turn_left()
         else:
@@ -415,59 +460,66 @@ def run_patrol(grid, max_steps=500):
     def stick_to_wall(hand):
         """Rotate in place until the chosen hand-side cell is a wall."""
         for _ in Facing:
-            side = (left_of[grid.facing] if hand == "L"
-                    else right_of[grid.facing])
-            if grid.is_blocked(*cell_at(grid.current_pos, side)):
+            if blocked(grid.current_pos, hand_side[hand][grid.facing]):
                 return
-            if hand == "L":
+            if hand == LEFT_HAND:
                 grid.turn_left()
             else:
                 grid.turn_right()
 
+    def enter_wall_mode(pos):
+        """Switch from greedy to left-handed wall following at pos."""
+        nonlocal wall_mode, hand, wall_steps, entry_dist, loop_path
+        wall_mode = True
+        hand = LEFT_HAND
+        wall_steps = 0
+        entry_dist = manhattan(pos, grid.enemy_pos)
+        loop_path = {pos}
+        stick_to_wall(hand)
+
+    def switch_hand():
+        """Abandon the looping hand; track the wall with the other one."""
+        nonlocal hand, wall_steps, loop_path
+        hand = RIGHT_HAND
+        wall_steps = 0
+        loop_path = {grid.current_pos}
+        stick_to_wall(hand)
+
+    def follow_wall(pos):
+        """Rotate to keep the active hand on the wall; caller then moves."""
+        turn_to_hand = (grid.turn_left if hand == LEFT_HAND
+                        else grid.turn_right)
+        turn_away = (grid.turn_right if hand == LEFT_HAND
+                     else grid.turn_left)
+        side = hand_side[hand][grid.facing]
+        if not blocked(pos, side):
+            turn_to_hand()
+        elif blocked(pos, grid.facing):
+            away = hand_away[hand][grid.facing]
+            if not blocked(pos, away):
+                turn_away()
+            else:
+                for _ in range(U_TURN_STEPS):
+                    grid.turn_right()
+
     visited = {grid.current_pos}
     steps = 0
     wall_mode = False
-    hand = "L"
+    hand = LEFT_HAND
     wall_steps = 0
     entry_dist = 0
     loop_path = set()
-    step_budget = 1.25 * (grid.width + grid.height)
+    step_budget = WALL_BUDGET_FACTOR * (grid.width + grid.height)
 
     while steps < max_steps and grid.fuel > 0 and not grid.found_enemy:
         pos = grid.current_pos
 
         # Enter escape mode exactly when greedy has no improving neighbor.
         if not wall_mode and not has_candidate():
-            wall_mode = True
-            hand = "L"
-            wall_steps = 0
-            entry_dist = manhattan(pos, grid.enemy_pos)
-            loop_path = {pos}
-            stick_to_wall(hand)
+            enter_wall_mode(pos)
 
         if wall_mode:
-            # Keep the chosen hand on the wall: prefer the hand-side cell,
-            # otherwise go forward, otherwise turn away or make a U-turn.
-            if hand == "L":
-                side = left_of[grid.facing]
-                away = right_of[grid.facing]
-            else:
-                side = right_of[grid.facing]
-                away = left_of[grid.facing]
-            if not grid.is_blocked(*cell_at(pos, side)):
-                if hand == "L":
-                    grid.turn_left()
-                else:
-                    grid.turn_right()
-            elif grid.is_blocked(*cell_at(pos, grid.facing)):
-                if not grid.is_blocked(*cell_at(pos, away)):
-                    if hand == "L":
-                        grid.turn_right()
-                    else:
-                        grid.turn_left()
-                else:
-                    grid.turn_right()
-                    grid.turn_right()
+            follow_wall(pos)
         else:
             direction = next_step_toward(pos, grid.enemy_pos,
                                          grid.obstacles, grid.facing)
@@ -477,32 +529,26 @@ def run_patrol(grid, max_steps=500):
         steps += 1
         visited.add(grid.current_pos)
 
-        if wall_mode:
-            wall_steps += 1
-            switched_hand = False
-            if (loop_detect_hand(grid, loop_path)
-                    and hand == "L"):
-                # Revisited a cell of this wall-following loop: the left
-                # hand is circling, switch hands immediately.
-                hand = "R"
-                wall_steps = 0
-                loop_path = {grid.current_pos}
-                stick_to_wall(hand)
-                switched_hand = True
-            if not switched_hand:
-                loop_path.add(grid.current_pos)
-                if wall_steps > step_budget and hand == "L":
-                    # Left hand loops too long: switch hands.
-                    hand = "R"
-                    wall_steps = 0
-                    loop_path = {grid.current_pos}
-                    stick_to_wall(hand)
-                elif wall_steps > 2 * step_budget:
-                    wall_mode = False
-                elif (has_candidate()
-                      and manhattan(grid.current_pos,
-                                    grid.enemy_pos) < entry_dist + 1):
-                    wall_mode = False
+        if not wall_mode:
+            continue
+        wall_steps += 1
+
+        # Revisited a cell of this wall-following loop: the left hand is
+        # circling; switch hands immediately and restart the trail.
+        if loop_detect_hand(grid, loop_path) and hand == LEFT_HAND:
+            switch_hand()
+            continue
+
+        loop_path.add(grid.current_pos)
+        if wall_steps > step_budget and hand == LEFT_HAND:
+            # Left hand runs too long without progress: switch hands.
+            switch_hand()
+        elif wall_steps > WALL_EXIT_MULTIPLIER * step_budget:
+            wall_mode = False
+        elif (has_candidate()
+              and manhattan(grid.current_pos, grid.enemy_pos)
+              < entry_dist + GREEDY_RETURN_MARGIN):
+            wall_mode = False
 
     found = grid.found_enemy
     return {

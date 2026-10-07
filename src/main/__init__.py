@@ -13,6 +13,7 @@
 """
 import json
 import re
+from collections import deque
 from enum import Enum
 
 
@@ -572,8 +573,30 @@ def report_to_json(stats):
 # Bonus：BFS 全局最短路（题面 Bonus·BFS 语义与排行榜）
 # ---------------------------------------------------------------------------
 def bfs_path_length(start, target, obstacles):
-    """TODO(Bonus)：BFS 全局最短路步数；返回语义与边界职责见题面 Bonus 规范。"""
-    raise NotImplementedError("Bonus bfs_path_length")
+    """Return the shortest four-neighbor path length.
+
+    Return 0 when start and target are the same cell, and -1 when the
+    target is unreachable. Per the Bonus contract, the caller must put
+    map boundaries in obstacles.
+    """
+    if start == target:
+        return 0
+    blocked = set(obstacles) if obstacles else set()
+
+    queue = deque([(start, 0)])
+    visited = {start}
+    directions = ((1, 0), (-1, 0), (0, 1), (0, -1))
+    while queue:
+        (x, y), distance = queue.popleft()
+        for dx, dy in directions:
+            nxt = (x + dx, y + dy)
+            if nxt in visited or nxt in blocked:
+                continue
+            if nxt == target:
+                return distance + 1
+            visited.add(nxt)
+            queue.append((nxt, distance + 1))
+    return -1
 
 
 # ---------------------------------------------------------------------------

@@ -133,7 +133,11 @@ CI 只允许修改 `src/main/**`、`README.md` 与 `.agent-sessions/**`（AI 会
 
 ### Bonus
 
-- （待实现后补充：BFS 替换贪心后的排行榜数据。）
+- `bfs_path_length` 使用 `deque[(cell, distance)]` 做四邻域 BFS；`start == target` 按规范直接返回 0。
+- 只把未访问且不在 `obstacles` 中的格子入队；目标本身是障碍时不会提前命中，最终返回 -1。地图边界按 Bonus 契约由调用方放入 `obstacles`，函数内部不假定地图尺寸。
+- 入口将 `obstacles` 归一为 set（`None`/空容器按无障碍处理，list/tuple/frozenset 同样接受），保证成员判断恒为 O(1) 且非集合输入不抛 `TypeError`。
+- `tools/run_seeds.py --bonus` 的 3 个内建用例（10 / 0 / -1）全部通过；另用独立 BFS 参考实现随机核对 5000 个带边界小图，结果完全一致。
+- 200 seed 排行榜模式：成功率 **100.0%**、平均步数 **29.5**、平均碰撞 **0.0**。可见测试从 1 skipped 变为 **35 passed**。
 
 ## 7. 踩坑记录
 
@@ -158,4 +162,5 @@ CI 只允许修改 `src/main/**`、`README.md` 与 `.agent-sessions/**`（AI 会
 17. **同一张朝向旋转表抄了三遍（DRY）**：Q3 的 `turn_left/turn_right`、Q6 的 `left_of/right_of/right_turns` 各自维护一份函数字典——改朝向语义要动三处、漏一处就出隐蔽 bug。重构时合并为模块级三张表，三处共用；重构后用"连转四次回原朝向"和 500 seed 回归证明行为不变。教训：重复数据比重复代码更危险，应先抽成单一事实源再写逻辑。
 18. **超长函数与魔法数字会掩盖控制流意图（Q6/Q2）**：`run_patrol` 一度近 150 行、内嵌两轮几乎相同的换手代码；`analyze_damage_log` 把两种格式解析、校验、去重、统计全揉在一个 for 里。重构时按"每函数只做一件事"拆出 `enter_wall_mode/switch_hand/follow_wall` 与两个行解析器，主循环因此能直接读成"贪心→卡住→贴墙→换手→回到贪心"的状态流；顺手补上 Q2 对非字符串行（如 `None`、数字）的跳过，落实规范第 3 条"全程不得抛异常"。教训：先保证测试与 seed 基线，再做纯结构重构，每步用同一组指标验收。
 19. **Q7 `parse_event` 未对非字符串输入做防御（隐藏测试）**：`parse_event` 契约明确"脏行返回 None（不得抛异常）"，但初版直接对 `line` 调用 `.strip().split(",")`。非字符串（`None`、`123`、字节串）会抛 `AttributeError` 或 `TypeError`，违反契约。本地测试 `test_parse_event` 只给了字符串输入，因此全绿。修复：开头加 `if not isinstance(line, str): return None`。教训：凡是契约写了"不得抛异常"的函数，第一条语句就该判断输入类型，不要假设调用方只传字符串。
+20. **BFS 队列距离变量名不一致（Bonus）**：队列节点写作 `(x, y, steps)`，扩展邻居时却引用了不存在的 `dist`，运行到非零路径会直接 `NameError`；另外若先判断 `nxt == target`、后判断障碍，目标格本身被放入 `obstacles` 时会被错误当成可达。修复：队列统一存 `(cell, distance)`，先过滤 visited/obstacles，再判断是否到达目标。教训：搜索算法里"当前节点距离"和"下一节点距离"要有统一命名，且障碍过滤必须先于目标命中。
 

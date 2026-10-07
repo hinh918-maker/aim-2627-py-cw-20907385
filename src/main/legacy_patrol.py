@@ -50,6 +50,8 @@ def total_route_meters(points):
 def parse_event(line):
     """解析一行事件日志，形如 "MOVE,3" / "SCAN,0" / "IDLE,1"。
     合法返回 {"type": str, "count": int}；脏行返回 None（不得抛异常）。"""
+    if not isinstance(line, str):
+        return None
     parts = line.strip().split(",")
     if len(parts) != 2 or parts[0] not in ("MOVE", "SCAN", "IDLE"):
         return None

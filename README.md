@@ -1,6 +1,6 @@
 # AIM 2627 Python Coursework —— 哨兵 Sentry 控制模块
 
-> **全部题目、规范、评分、提交见 [题面.pdf](题面.pdf)。** 本 README 只讲怎么把环境跑起来；没在这里出现的规格细节，一律以题面为准。
+> **全部题目、规范、评分、提交见** **[题面.pdf](题面.pdf)。** 本 README 只讲怎么把环境跑起来；没在这里出现的规格细节，一律以题面为准。
 
 ## 1. 环境要求
 
@@ -57,14 +57,14 @@ python main.py
 
 ## 5. 仓库结构（哪些能改）
 
-| 路径 | 说明 | 能否修改 |
-|---|---|---|
-| `src/main/__init__.py` | 你的全部作业（TODO 所在） | ✅ |
-| `README.md` | 仅末尾两个"你来写"小节 | ✅ |
-| `题面.pdf` | 题面（唯一规格说明） | ❌ 勿改 |
-| `src/main/legacy_patrol.py` | Q7 模块（与主体同步发布，修复其缺陷） | Q7 时 ✅ |
-| `.pre-commit-config.yaml` | AI 会话归档钩子配置 | ❌ 勿改 |
-| `src/tests/`、`tools/`、`.github/`、`conftest.py`、`pytest.ini`、`main.py` | 测试与基础设施 | ❌ 勿改 |
+| 路径                                                                    | 说明                   | 能否修改   |
+| --------------------------------------------------------------------- | -------------------- | ------ |
+| `src/main/__init__.py`                                                | 你的全部作业（TODO 所在）      | ✅      |
+| `README.md`                                                           | 仅末尾两个"你来写"小节         | ✅      |
+| `题面.pdf`                                                              | 题面（唯一规格说明）           | ❌ 勿改   |
+| `src/main/legacy_patrol.py`                                           | Q7 模块（与主体同步发布，修复其缺陷） | Q7 时 ✅ |
+| `.pre-commit-config.yaml`                                             | AI 会话归档钩子配置          | ❌ 勿改   |
+| `src/tests/`、`tools/`、`.github/`、`conftest.py`、`pytest.ini`、`main.py` | 测试与基础设施              | ❌ 勿改   |
 
 CI 只允许修改 `src/main/**`、`README.md` 与 `.agent-sessions/**`（AI 会话归档）——其余文件改了直接红；autopep8 `--diff` 非空即败。提交方式（push、问卷、commit 粒度）见题面"提交与验收"一节。
 
@@ -124,6 +124,7 @@ CI 只允许修改 `src/main/**`、`README.md` 与 `.agent-sessions/**`（AI 会
 6. **`run_legacy_sim`：while 循环缺** **`round_ += 1`**——计数器不自增，`round_ < rounds` 永真，死循环。与第 5 条互相遮蔽：条件写反时永远不进入 `break` 分支，缺自增不暴露；先修条件后死循环才显现。
 
 ### 代码结构约定（重构后）
+
 - **题面规则数字一律命名常量**：电量档（`BATTERY_OK_MIN/LOW_MAX`）、撤退血量 `RETREAT_HP_PERCENT`、射击距离 `ENGAGE_RANGE`、帧窗 `MAX_FRAME_HISTORY`、沿墙预算 `WALL_BUDGET_FACTOR` 等，判据处只出现语义名；Q7 遗留模块的 100/8/5/3/20 同样命名。
 - **几何表只有一份**：朝向左旋/右旋/右转次数三张表集中为模块级 `TURN_LEFT_OF / TURN_RIGHT_OF / RIGHT_TURN_COUNT`，Q3 载体转向、Q4 朝向对齐、Q6 贴墙共用，消除原先三处手抄字典。
 - **Q2 解析按职责拆分**：`_parse_json_line` / `_parse_sensor_line` 各管一种格式的校验，`analyze_damage_log` 只做遍历、去重与汇总；有效事件先收集成列表再统一统计，累加逻辑只有一处。
@@ -156,4 +157,5 @@ CI 只允许修改 `src/main/**`、`README.md` 与 `.agent-sessions/**`（AI 会
 16. **负敌距被当作"贴脸"（Q5）**：`enemy_dist=-5` 是非法读数，但旧代码只排除非 int 与 bool，-5 通过 `<= 3` 判据直接返回 SHOOT。修复：归一化时把负数与非 int、bool 一并按 `None`（未知距离→不满足近距→侧移）处理；合法的 0–3 仍正常 SHOOT。
 17. **同一张朝向旋转表抄了三遍（DRY）**：Q3 的 `turn_left/turn_right`、Q6 的 `left_of/right_of/right_turns` 各自维护一份函数字典——改朝向语义要动三处、漏一处就出隐蔽 bug。重构时合并为模块级三张表，三处共用；重构后用"连转四次回原朝向"和 500 seed 回归证明行为不变。教训：重复数据比重复代码更危险，应先抽成单一事实源再写逻辑。
 18. **超长函数与魔法数字会掩盖控制流意图（Q6/Q2）**：`run_patrol` 一度近 150 行、内嵌两轮几乎相同的换手代码；`analyze_damage_log` 把两种格式解析、校验、去重、统计全揉在一个 for 里。重构时按"每函数只做一件事"拆出 `enter_wall_mode/switch_hand/follow_wall` 与两个行解析器，主循环因此能直接读成"贪心→卡住→贴墙→换手→回到贪心"的状态流；顺手补上 Q2 对非字符串行（如 `None`、数字）的跳过，落实规范第 3 条"全程不得抛异常"。教训：先保证测试与 seed 基线，再做纯结构重构，每步用同一组指标验收。
+19. **Q7 `parse_event` 未对非字符串输入做防御（隐藏测试）**：`parse_event` 契约明确"脏行返回 None（不得抛异常）"，但初版直接对 `line` 调用 `.strip().split(",")`。非字符串（`None`、`123`、字节串）会抛 `AttributeError` 或 `TypeError`，违反契约。本地测试 `test_parse_event` 只给了字符串输入，因此全绿。修复：开头加 `if not isinstance(line, str): return None`。教训：凡是契约写了"不得抛异常"的函数，第一条语句就该判断输入类型，不要假设调用方只传字符串。
 

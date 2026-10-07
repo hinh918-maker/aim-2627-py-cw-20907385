@@ -1,6 +1,6 @@
 # AIM 2627 Python Coursework —— 哨兵 Sentry 控制模块
 
-> **全部题目、规范、评分、提交见** **[题面.pdf](题面.pdf)。** 本 README 只讲怎么把环境跑起来；没在这里出现的规格细节，一律以题面为准。
+> **全部题目、规范、评分、提交见 [题面.pdf](题面.pdf)。** 本 README 只讲怎么把环境跑起来；没在这里出现的规格细节，一律以题面为准。
 
 ## 1. 环境要求
 
@@ -57,14 +57,14 @@ python main.py
 
 ## 5. 仓库结构（哪些能改）
 
-| 路径                                                                    | 说明                   | 能否修改   |
-| --------------------------------------------------------------------- | -------------------- | ------ |
-| `src/main/__init__.py`                                                | 你的全部作业（TODO 所在）      | ✅      |
-| `README.md`                                                           | 第 6/7 节等由你撰写的小节（设计决策、代码结构约定、踩坑记录） | ✅      |
-| `题面.pdf`                                                              | 题面（唯一规格说明）           | ❌ 勿改   |
-| `src/main/legacy_patrol.py`                                           | Q7 模块（与主体同步发布，修复其缺陷） | Q7 时 ✅ |
-| `.pre-commit-config.yaml`                                             | AI 会话归档钩子配置          | ❌ 勿改   |
-| `src/tests/`、`tools/`、`.github/`、`conftest.py`、`pytest.ini`、`main.py` | 测试与基础设施              | ❌ 勿改   |
+| 路径 | 说明 | 能否修改 |
+|---|---|---|
+| `src/main/__init__.py` | 你的全部作业（TODO 所在） | ✅ |
+| `README.md` | 仅末尾两个"你来写"小节 | ✅ |
+| `题面.pdf` | 题面（唯一规格说明） | ❌ 勿改 |
+| `src/main/legacy_patrol.py` | Q7 模块（与主体同步发布，修复其缺陷） | Q7 时 ✅ |
+| `.pre-commit-config.yaml` | AI 会话归档钩子配置 | ❌ 勿改 |
+| `src/tests/`、`tools/`、`.github/`、`conftest.py`、`pytest.ini`、`main.py` | 测试与基础设施 | ❌ 勿改 |
 
 CI 只允许修改 `src/main/**`、`README.md` 与 `.agent-sessions/**`（AI 会话归档）——其余文件改了直接红；autopep8 `--diff` 非空即败。提交方式（push、问卷、commit 粒度）见题面"提交与验收"一节。
 
